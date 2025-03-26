@@ -778,6 +778,14 @@ src_libdrivers_la_SOURCES += \
 	src/hardware/zketech-ebd-usb/api.c
 endif
 
+## Pridanie zdrojových súborov BP projektu - Samuel Zaprazny
+if HW_ESP32_BP_SZ
+src_libdrivers_la_SOURCES += \
+	src/hardware/esp32-bp-sz/protocol.h \
+	src/hardware/esp32-bp-sz/protocol.c \
+	src/hardware/esp32-bp-sz/api.c
+endif
+
 libsigrok_la_LIBADD = src/libdrivers.lo $(SR_EXTRA_LIBS) $(LIBSIGROK_LIBS)
 libsigrok_la_LDFLAGS = -version-info $(SR_LIB_VERSION) -no-undefined
 

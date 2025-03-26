@@ -397,6 +397,13 @@ SR_DRIVER([Yokogawa DL/DLM], [yokogawa-dlm])
 SR_DRIVER([ZEROPLUS Logic Cube], [zeroplus-logic-cube], [libusb])
 SR_DRIVER([ZKETECH EBD-USB], [zketech-ebd-usb], [serial_comm])
 
+## Registrovanie hardvérového drivera pre BP projekt - Samuel Zaprazny
+## SR_DRIVER(Device name, driver-name, [dependencies...])
+## driver-name pretvorí na C makro HW_DRIVER_NAME
+## C makro bude vyzerať: HW_ESP32_BP_SZ
+
+SR_DRIVER([ESP32 Logic Analyzer], [esp32-bp-sz], [libusb])
+
 ###############################
 ##  Language bindings setup  ##
 ###############################
