@@ -14,7 +14,7 @@
 #include <unistd.h>
 #include <math.h>
 
-// Definovanie konštant
+// Deklarovanie konštant
 
 #define CDC_REQUEST_SET_LINE_CODING 0x20
 #define CDC_REQUEST_SET_CONTROL_LINE_STATE 0x22
@@ -33,15 +33,18 @@
 #define DATA_ENDPOINT_IN 0x82
 #define DATA_ENDPOINT_OUT 0x02
 
+#define VOLTAGE_CHANNELS 1
+#define CURRENT_CHANNELS 1
+
 #define LOGIC_CHANNELS 8
-#define ANALOG_CHANNELS 2
+#define ANALOG_CHANNELS (VOLTAGE_CHANNELS + CURRENT_CHANNELS)
 
 #define HEADER_SIZE 9
 #define ANALOG_CHANNEL_SIZE 5
 #define LOGIC_DATA_SIZE 266
 #define ANALOG_DATA_SIZE (HEADER_SIZE + ANALOG_CHANNELS * ANALOG_CHANNEL_SIZE)
 
-// Definovanie enumeratorov
+// Deklarovanie enumeratorov
 
 enum packet_data {
     DATA_LOGIC = 1, DATA_ANALOG = 2
@@ -57,7 +60,7 @@ enum measured_quantity {
     VOLTS, MILI_VOLTS, AMPERES, MILI_AMPERES, MICRO_AMPERES
 }
 
-// Definovanie deskriptora zariadenia
+// Deklarovanie deskriptora zariadenia
 
 struct dev_context {
 
@@ -72,6 +75,12 @@ struct dev_context {
     // Konfigurácia USB
     libusb_device * usb_device;
 
+    // sigrok device driver
+    struct sr_dev_driver * driver;
+
 };
+
+// Deklarovanie protokolových funkcii
+int acquisition_callback(int fd, int events, void * cb_data);
 
 #endif
