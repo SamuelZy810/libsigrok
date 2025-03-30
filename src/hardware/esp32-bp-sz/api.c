@@ -198,7 +198,14 @@ static int config_get(uint32_t key, GVariant ** data,
 }
 
 static int config_set(uint32_t key, GVariant * data,
-	const struct sr_dev_inst * sdi, const struct sr_channel_group *cg) {
+	const struct sr_dev_inst * sdi, const struct sr_channel_group * cg) {
+
+    (void) key;
+    (void) data;
+    (void) sdi;
+    (void) cg;
+
+    // Nič sa nenastavuje
     
     return SR_OK;
 
@@ -206,6 +213,34 @@ static int config_set(uint32_t key, GVariant * data,
 
 static int config_list(uint32_t key, GVariant ** data,
 	const struct sr_dev_inst * sdi, const struct sr_channel_group * cg) {
+
+    struct dev_context * devc = (struct dev_context *) sdi->priv;
+    struct sr_channel * channel = NULL;
+
+    if (cg && cg->channels) {
+        channel = cg->channels->data;
+    }
+
+    switch (key) {
+        case SR_CONF_SCAN_OPTIONS:
+        case SR_CONF_DEVICE_OPTIONS: {
+
+            if (!cg) {
+                return STD_CONFIG_LIST(key, data, sdi, cg, scanopts, drvopts, devopts);
+            } else {
+                if (ch->type == SR_CHANNEL_ANALOG) {
+                    *data = std_gvar_array_u32(ARRAY_AND_SIZE(devopts_analog_channel));
+                } else {
+                    return SR_ERR_NA;
+                }
+            }
+            break;
+
+        }
+        default: {
+            break;
+        }
+    }
     
     return SR_OK;
 
