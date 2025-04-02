@@ -2,8 +2,8 @@
 #include "protocol.h"
 #include "configurations.h"
 
-static libusb_device * usb_device = NULL;
-static libusb_device_handle * usb_handle = NULL;
+static struct libusb_device * usb_device = NULL;
+static struct libusb_device_handle * usb_handle = NULL;
 
 // API
 // Definícia API funkcií pre libsigrok hardware driver
@@ -82,7 +82,7 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
         return NULL;
     }
 
-    for (size_t i = 0; i < count; i ++) {
+    for (ssize_t i = 0; i < count; i ++) {
 
         libusb_device * device = list[i];
         struct libusb_device_descriptor descriptor;
@@ -109,7 +109,8 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 
             sdi->priv = devc;
 
-            struct sr_channel_group * achg = sr_channel_group_new(sdi, "Analog", NULL);
+            struct sr_channel_group * vchg = sr_channel_group_new(sdi, "Voltage", NULL);
+            struct sr_channel_group * cchg = sr_channel_group_new(sdi, "Current", NULL);
             struct sr_channel_group * lchg = sr_channel_group_new(sdi, "Logic", NULL);
             struct sr_channel * ch = NULL;
 
@@ -120,11 +121,11 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 
                 // Nastavenie mena kanálu
                 char name[32];
-                sprintf(name, "Voltage channel %d", i);
+                sprintf(name, "Voltage channel %lu", i);
 
                 // Vytvorenie kanálu
                 ch = sr_channel_new(sdi, i, SR_CHANNEL_ANALOG, TRUE, name);
-                achg->channels = g_slist_append(achg->channels, ch);
+                vchg->channels = g_slist_append(vchg->channels, ch);
 
             }
 
@@ -133,11 +134,11 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 
                 // Nastavenie mena kanálu
                 char name[32];
-                sprintf(name, "Current channel %d", i - VOLTAGE_CHANNELS);
+                sprintf(name, "Current channel %lu", i - VOLTAGE_CHANNELS);
 
                 // Vytvorenie kanálu
                 ch = sr_channel_new(sdi, i, SR_CHANNEL_ANALOG, TRUE, name);
-                achg->channels = g_slist_append(achg->channels, ch);
+                cchg->channels = g_slist_append(cchg->channels, ch);
 
             }
 
@@ -146,7 +147,7 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 
                 // Nastavenie mena kanálu
                 char name[32];
-                sprintf(name, "Channel %d", i - ANALOG_CHANNELS);
+                sprintf(name, "Channel %lu", i - ANALOG_CHANNELS);
 
                 // Vytvorenie kanálu
                 ch = sr_channel_new(sdi, i, SR_CHANNEL_LOGIC, TRUE, name);
@@ -167,14 +168,20 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
             devc->driver = di;
             usb_device = libusb_ref_device(device);
 
-            libusb_free_device_list(list, 1);
-
             // Nastavenie sigrok device drivera - sdi
             sdi->inst_type = SR_INST_USB;
 	        sdi->status = SR_ST_INITIALIZING;
             sdi->vendor = g_strdup("SZ-BP");
 	        sdi->model = g_strdup("ESP32-S3");
             sdi->driver = di;
+
+            sdi->conn = sr_usb_dev_inst_new (
+                libusb_get_bus_number(usb_device),
+                libusb_get_device_address(usb_device), 
+                usb_handle
+            );
+
+            libusb_free_device_list(list, 1);
 
             return std_scan_complete(di, g_slist_append(NULL, sdi));
 
@@ -192,6 +199,63 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 
 static int config_get(uint32_t key, GVariant ** data,
 	const struct sr_dev_inst * sdi, const struct sr_channel_group * cg) {
+
+    struct dev_context * devc = (struct dev_context *) sdi->priv;
+
+    switch (key) {
+
+        case SR_CONF_MEASURED_QUANTITY: {
+
+            if (!cg) {
+                return SR_ERR_CHANNEL_GROUP;
+            }
+
+            GVariant * arr[2];
+
+            if (strcmp(cg->name, "Voltage") == 0) {
+
+                sr_log(SR_LOG_ERR, "Voltage MQ!");
+
+                arr[0] = g_variant_new_uint32(SR_MQ_VOLTAGE);
+		        arr[1] = g_variant_new_uint64(SR_MQFLAG_DC);
+                *data = g_variant_new_tuple(arr, 2);
+
+            } else if (strcmp(cg->name, "Current") == 0) {
+
+                sr_log(SR_LOG_ERR, "Current MQ!");
+
+                arr[0] = g_variant_new_uint32(SR_MQ_CURRENT);
+		        arr[1] = g_variant_new_uint64(SR_MQFLAG_DC);
+                *data = g_variant_new_tuple(arr, 2);
+
+            } else {
+
+                return SR_ERR_NA;
+
+            }
+            break;
+        }
+        case SR_CONF_SAMPLERATE: {
+            *data = g_variant_new_uint64(SR_KHZ(500));
+            break;
+        }
+        case SR_CONF_CONTINUOUS: {
+            *data = g_variant_new_boolean(true);
+            break;
+        }
+        case SR_CONF_NUM_LOGIC_CHANNELS: {
+            *data = g_variant_new_uint32(devc->num_log_ch);
+            break;
+        }
+        case SR_CONF_NUM_ANALOG_CHANNELS: {
+            *data = g_variant_new_uint32(devc->num_cur_ch + devc->num_vol_ch);
+            break;
+        }
+        default: {
+            return SR_ERR_NA;
+        }
+
+    }
     
     return SR_OK;
 
@@ -200,12 +264,33 @@ static int config_get(uint32_t key, GVariant ** data,
 static int config_set(uint32_t key, GVariant * data,
 	const struct sr_dev_inst * sdi, const struct sr_channel_group * cg) {
 
-    (void) key;
     (void) data;
     (void) sdi;
     (void) cg;
 
     // Nič sa nenastavuje
+    switch (key) {
+
+        case SR_CONF_MEASURED_QUANTITY: {
+            break;
+        }
+        case SR_CONF_SAMPLERATE: {
+            break;
+        }
+        case SR_CONF_CONTINUOUS: {
+            break;
+        }
+        case SR_CONF_NUM_LOGIC_CHANNELS: {
+            break;
+        }
+        case SR_CONF_NUM_ANALOG_CHANNELS: {
+            break;
+        }
+        default: {
+            return SR_ERR_NA;
+        }
+
+    }
     
     return SR_OK;
 
@@ -216,6 +301,8 @@ static int config_list(uint32_t key, GVariant ** data,
 
     struct dev_context * devc = (struct dev_context *) sdi->priv;
     struct sr_channel * channel = NULL;
+
+    (void) devc;
 
     if (cg && cg->channels) {
         channel = cg->channels->data;
@@ -228,7 +315,7 @@ static int config_list(uint32_t key, GVariant ** data,
             if (!cg) {
                 return STD_CONFIG_LIST(key, data, sdi, cg, scanopts, drvopts, devopts);
             } else {
-                if (ch->type == SR_CHANNEL_ANALOG) {
+                if (channel->type == SR_CHANNEL_ANALOG) {
                     *data = std_gvar_array_u32(ARRAY_AND_SIZE(devopts_analog_channel));
                 } else {
                     return SR_ERR_NA;
@@ -237,8 +324,17 @@ static int config_list(uint32_t key, GVariant ** data,
             break;
 
         }
-        default: {
+        case SR_CONF_SAMPLERATE: {
+            uint64_t samplerates[] = {SR_KHZ(500)};
+            *data = std_gvar_samplerates(ARRAY_AND_SIZE(samplerates));
             break;
+        }
+        case SR_CONF_CONTINUOUS:{
+            *data = g_variant_new_boolean(TRUE);
+            break;
+        }
+        default: {
+            return SR_ERR_NA;
         }
     }
     
@@ -264,6 +360,8 @@ static int dev_open(struct sr_dev_inst * sdi) {
         sdi->status = SR_ST_STOPPING;
         return SR_ERR;
     }
+
+    devc->usb_handle = usb_handle;
 
     result = libusb_kernel_driver_active(usb_handle, DATA_INTERFACE);
     if (result == 1) {
@@ -316,12 +414,6 @@ static int dev_open(struct sr_dev_inst * sdi) {
 
     }
 
-    sdi->conn = sr_usb_dev_inst_new (
-        libusb_get_bus_number(usb_device),
-        libusb_get_device_address(usb_device), 
-        usb_handle
-    );
-
     sdi->status = SR_ST_INACTIVE;
 
     return SR_OK;
@@ -343,17 +435,12 @@ static int dev_close(struct sr_dev_inst * sdi) {
 
         result = libusb_attach_kernel_driver(usb_handle, DATA_INTERFACE);
         if (result != LIBUSB_SUCCESS) {
-            sr_log(SR_LOG_ERR, "LIBUSB_SUCCESS = %d", LIBUSB_SUCCESS);
             sr_log(SR_LOG_ERR, "Error attaching kernel driver to usb interface!");
         }
 
         libusb_close(usb_handle);
         usb_handle = NULL;
 
-    }
-
-    if (sdi->conn) {
-        sr_usb_dev_inst_free(sdi->conn);
     }
 
     return SR_OK;
@@ -363,6 +450,10 @@ static int dev_close(struct sr_dev_inst * sdi) {
 // PROCESS: Akvizícia a čítanie
 
 static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
+
+    struct dev_context * devc = (struct dev_context *) sdi->priv;
+
+    init_mutex();
 
     int result = 0;
 
@@ -390,7 +481,7 @@ static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
         sr_ctx,
         1000,
         acquisition_callback,
-        sdi
+        (struct sr_dev_inst *) sdi
     );
 
     if (result != SR_OK) {
@@ -398,31 +489,116 @@ static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
         return SR_ERR;
     }
 
+    devc->voltage_data = (float *) g_malloc0(VOLTAGE_CHANNELS * sizeof(float));
+    if (!devc->voltage_data) {
+        sr_log(SR_LOG_ERR, "Couldn't allocate buffer for Voltage channels!");
+
+        result = usb_source_remove(sdi->session, sr_ctx);
+        if (result != SR_OK) {
+            sr_log(SR_LOG_ERR, "Couln't remove session!");
+            return result;
+        }
+
+        return SR_ERR;
+    }
+
+    devc->current_data = (float *) g_malloc0(CURRENT_CHANNELS * sizeof(float));
+    if (!devc->current_data) {
+        sr_log(SR_LOG_ERR, "Couldn't allocate buffer for Current channels!");
+
+        result = usb_source_remove(sdi->session, sr_ctx);
+        if (result != SR_OK) {
+            sr_log(SR_LOG_ERR, "Couln't remove session!");
+            return result;
+        }
+
+        return SR_ERR;
+    }
+
+    result = allocate_logic_descriptors(devc);
+    if (!result) {
+        sr_log(SR_LOG_ERR, "Couldn't allocate buffer for Logic channels descriptors!");
+
+        result = usb_source_remove(sdi->session, sr_ctx);
+        if (result != SR_OK) {
+            sr_log(SR_LOG_ERR, "Couln't remove session!");
+            return result;
+        }
+
+        return SR_ERR;
+    }
+
     result = std_session_send_df_header(sdi);
     if (result != SR_OK) {
         sr_log(SR_LOG_ERR, "Couln't send session header!");
+
+        result = usb_source_remove(sdi->session, sr_ctx);
+        if (result != SR_OK) {
+            sr_log(SR_LOG_ERR, "Couln't remove session!");
+            return result;
+        }
+
         return SR_ERR;
     }
 
     result = std_session_send_df_frame_begin(sdi);
     if (result != SR_OK) {
         sr_log(SR_LOG_ERR, "Couln't start session!");
+
+
+        result = usb_source_remove(sdi->session, sr_ctx);
+        if (result != SR_OK) {
+            sr_log(SR_LOG_ERR, "Couln't remove session!");
+            return result;
+        }
+
         return SR_ERR;
     }
 
-    sdi->status = SR_ST_ACTIVE;
+    devc->running = true;
+
+    pthread_t th;
+
+    result = pthread_create(&th, NULL, process_send, sdi);
+    if (result != 0) {
+        sr_log(SR_LOG_ERR, "Couln't start transmitting packets to PV!");
+
+
+        result = usb_source_remove(sdi->session, sr_ctx);
+        if (result != SR_OK) {
+            sr_log(SR_LOG_ERR, "Couln't remove session!");
+            return result;
+        }
+
+        return SR_ERR;
+    }
+
+    result = pthread_detach(th);
+    if (result != 0) {
+        sr_log(SR_LOG_ERR, "Couln't detach transmitting packets to PV!");
+
+
+        result = usb_source_remove(sdi->session, sr_ctx);
+        if (result != SR_OK) {
+            sr_log(SR_LOG_ERR, "Couln't remove session!");
+            return result;
+        }
+
+        return SR_ERR;
+    }
+
     return SR_OK;
 
 }
 
 static int dev_acquisition_stop(struct sr_dev_inst * sdi) {
 
-    sdi->status = SR_ST_INACTIVE;
+    struct dev_context * devc = (struct dev_context *) sdi->priv;
 
     int result = 0;
 
     result = libusb_control_transfer(
-        devc->usb_handle,
+        usb_handle,
         (uint32_t) LIBUSB_REQUEST_TYPE_CLASS | (uint32_t) LIBUSB_RECIPIENT_INTERFACE,
         CDC_REQUEST_SET_CONTROL_LINE_STATE,
         LINE_STATE_STOP,
@@ -435,6 +611,8 @@ static int dev_acquisition_stop(struct sr_dev_inst * sdi) {
         sr_log(SR_LOG_ERR, "Couldn't stop bulk transfer from recieving device!");
         return SR_ERR;
     }
+
+    devc->running = false;
 
     struct sr_dev_driver * di = devc->driver;
     struct drv_context * dr_ctx = di->context;
@@ -457,6 +635,12 @@ static int dev_acquisition_stop(struct sr_dev_inst * sdi) {
         sr_log(SR_LOG_ERR, "Couln't remove session!");
         return result;
     }
+
+    destroy_mutex();
+
+    g_free(devc->voltage_data);
+    g_free(devc->current_data);
+    free_logic_descriptors(devc);
 
     return SR_OK;
 

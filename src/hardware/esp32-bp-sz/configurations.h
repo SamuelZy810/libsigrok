@@ -13,12 +13,12 @@ static const uint32_t drvopts[] = {
 };
 
 static const uint32_t devopts[] = {
-	SR_CONF_SAMPLERATE          | SR_CONF_LIST | SR_CONF_GET,
-	SR_CONF_CONTINUOUS          | SR_CONF_LIST | SR_CONF_GET,
+	SR_CONF_SAMPLERATE          | SR_CONF_LIST | SR_CONF_GET | SR_CONF_SET,
+	SR_CONF_CONTINUOUS          | SR_CONF_LIST | SR_CONF_GET | SR_CONF_SET,
 };
 
 static const uint32_t devopts_analog_channel[] = {
-    SR_CONF_MEASURED_QUANTITY   | SR_CONF_LIST | SR_CONF_GET,
+    SR_CONF_MEASURED_QUANTITY   | SR_CONF_GET | SR_CONF_SET,
 };
 
 #endif

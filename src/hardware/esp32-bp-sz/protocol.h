@@ -11,8 +11,13 @@
 
 #include <config.h>
 #include <string.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <math.h>
+
+#include <stdatomic.h>
+#include <pthread.h>
+#include <time.h>
 
 // Deklarovanie konštant
 
@@ -40,9 +45,12 @@
 #define ANALOG_CHANNELS (VOLTAGE_CHANNELS + CURRENT_CHANNELS)
 
 #define HEADER_SIZE 9
+#define TYPE_FIELD 8
 #define ANALOG_CHANNEL_SIZE 5
 #define LOGIC_DATA_SIZE 266
 #define ANALOG_DATA_SIZE (HEADER_SIZE + ANALOG_CHANNELS * ANALOG_CHANNEL_SIZE)
+
+#define LOGIC_CHANNELS_DESCRIPTORS 4
 
 // Deklarovanie enumeratorov
 
@@ -58,7 +66,15 @@ enum channel_type {
 
 enum measured_quantity {
     VOLTS, MILI_VOLTS, AMPERES, MILI_AMPERES, MICRO_AMPERES
-}
+};
+
+struct logic_data {
+    int number;
+    uint8_t * data;
+    bool filled;
+    int pointer;
+    struct logic_data * next;
+};
 
 // Deklarovanie deskriptora zariadenia
 
@@ -73,14 +89,28 @@ struct dev_context {
     enum measured_quantity voltage_quantity;    // Meraná veličina napätia
 
     // Konfigurácia USB
-    libusb_device * usb_device;
+    struct libusb_device * usb_device;
+    struct libusb_device_handle * usb_handle;
 
     // sigrok device driver
     struct sr_dev_driver * driver;
 
+    // Zber dát
+    float * voltage_data;
+    float * current_data;
+    struct logic_data * logic_ptr;
+
+    // Stop worker thread
+    atomic_bool running;
+
 };
 
 // Deklarovanie protokolových funkcii
+void init_mutex();
+void destroy_mutex();
+bool allocate_logic_descriptors(struct dev_context * devc);
+void free_logic_descriptors(struct dev_context * devc);
+void * process_send(void * data);
 int acquisition_callback(int fd, int events, void * cb_data);
 
 #endif
