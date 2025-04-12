@@ -121,7 +121,7 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 
                 // Nastavenie mena kanálu
                 char name[32];
-                sprintf(name, "Voltage channel %lu", i);
+                sprintf(name, "Voltage ch %lu", i);
 
                 // Vytvorenie kanálu
                 ch = sr_channel_new(sdi, i, SR_CHANNEL_ANALOG, TRUE, name);
@@ -134,7 +134,7 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 
                 // Nastavenie mena kanálu
                 char name[32];
-                sprintf(name, "Current channel %lu", i - VOLTAGE_CHANNELS);
+                sprintf(name, "Current ch %lu", i - VOLTAGE_CHANNELS);
 
                 // Vytvorenie kanálu
                 ch = sr_channel_new(sdi, i, SR_CHANNEL_ANALOG, TRUE, name);
@@ -147,7 +147,7 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 
                 // Nastavenie mena kanálu
                 char name[32];
-                sprintf(name, "Channel %lu", i - ANALOG_CHANNELS);
+                sprintf(name, "Logic ch %lu", i - ANALOG_CHANNELS);
 
                 // Vytvorenie kanálu
                 ch = sr_channel_new(sdi, i, SR_CHANNEL_LOGIC, TRUE, name);
@@ -214,15 +214,11 @@ static int config_get(uint32_t key, GVariant ** data,
 
             if (strcmp(cg->name, "Voltage") == 0) {
 
-                sr_log(SR_LOG_ERR, "Voltage MQ!");
-
                 arr[0] = g_variant_new_uint32(SR_MQ_VOLTAGE);
 		        arr[1] = g_variant_new_uint64(SR_MQFLAG_DC);
                 *data = g_variant_new_tuple(arr, 2);
 
             } else if (strcmp(cg->name, "Current") == 0) {
-
-                sr_log(SR_LOG_ERR, "Current MQ!");
 
                 arr[0] = g_variant_new_uint32(SR_MQ_CURRENT);
 		        arr[1] = g_variant_new_uint64(SR_MQFLAG_DC);
@@ -236,7 +232,7 @@ static int config_get(uint32_t key, GVariant ** data,
             break;
         }
         case SR_CONF_SAMPLERATE: {
-            *data = g_variant_new_uint64(SR_KHZ(500));
+            *data = g_variant_new_uint64(SR_KHZ(10));
             break;
         }
         case SR_CONF_CONTINUOUS: {
@@ -325,7 +321,7 @@ static int config_list(uint32_t key, GVariant ** data,
 
         }
         case SR_CONF_SAMPLERATE: {
-            uint64_t samplerates[] = {SR_KHZ(500)};
+            uint64_t samplerates[] = {SR_KHZ(10)};
             *data = std_gvar_samplerates(ARRAY_AND_SIZE(samplerates));
             break;
         }
@@ -356,63 +352,70 @@ static int dev_open(struct sr_dev_inst * sdi) {
     int result = 0;
 
     result = libusb_open(usb_device, &usb_handle);
-    if (result < 0) {
+    if (result != LIBUSB_SUCCESS) {
         sdi->status = SR_ST_STOPPING;
         return SR_ERR;
     }
 
     devc->usb_handle = usb_handle;
 
+    result = libusb_reset_device(usb_handle);
+    if (result != LIBUSB_SUCCESS) {
+        SR_LOG(SR:LOG_ERR, "Couldn't reset device - %s!", libusb_error_name(result));
+        libusb_close(usb_handle);
+        return SR_ERR;
+    }
+
+    result = libusb_set_configuration(usb_handle, 1);
+    if (result != LIBUSB_SUCCESS) {
+        SR_LOG(SR:LOG_ERR, "Couldn't get configuration - %s!", libusb_error_name(result));
+        libusb_close(usb_handle);
+        return SR_ERR;
+    }
+
     result = libusb_kernel_driver_active(usb_handle, DATA_INTERFACE);
-    if (result == 1) {
+    if (result) {
 
-        sr_log(SR_LOG_INFO, "Detaching kernel!");
         result = libusb_detach_kernel_driver(usb_handle, DATA_INTERFACE);
-
-        if (result < 0) {
-
-            sr_log(SR_LOG_ERR, "Kernel detach failed!");
+        if (result != LIBUSB_SUCCESS) {
+            sr_log(SR_LOG_ERR, "Kernel detach failed - DATA_INTERFACE!");
             libusb_close(usb_handle);
             return SR_ERR;
-
         }
 
     }
 
     result = libusb_claim_interface(usb_handle, DATA_INTERFACE);
-    if (result < 0) {
+    if (result != LIBUSB_SUCCESS) {
 
-        sr_log(SR_LOG_ERR, "Claim interface failed!");
+        sr_log(SR_LOG_ERR, "Claim interface failed - DATA_INTERFACE!");
         libusb_close(usb_handle);
         return SR_ERR;
 
     }
 
-    uint8_t line_coding[7] = {
-        0x00, 0x1B, 0xB7, 0x00,
-        0x00,
-        0x00,
-        0x08
-    };
+    result = libusb_kernel_driver_active(usb_handle, CONTROL_INTERFACE);
+    if (result) {
 
-    result = libusb_control_transfer (
-        usb_handle,
-        (uint32_t) LIBUSB_REQUEST_TYPE_CLASS | (uint32_t) LIBUSB_RECIPIENT_INTERFACE,
-        CDC_REQUEST_SET_LINE_CODING,
-        0,
-        CONT_INTERFACE,
-        line_coding,
-        sizeof(line_coding),
-        1000
-    );
-    if (result < 0) {
+        result = libusb_detach_kernel_driver(usb_handle, CONTROL_INTERFACE);
+        if (result != LIBUSB_SUCCESS) {
+            sr_log(SR_LOG_ERR, "Kernel detach failed - CONTROL_INTERFACE!");
+            libusb_release_interface(usb_handle, DATA_INTERFACE);
+            libusb_close(usb_handle);
+            return SR_ERR;
+        }
 
-        sr_log(SR_LOG_ERR, "Couldn't set line coding!");
+    }
+
+    result = libusb_claim_interface(usb_handle, CONTROL_INTERFACE);
+    if (result != LIBUSB_SUCCESS) {
+
+        sr_log(SR_LOG_ERR, "Claim interface failed - CONTROL_INTERFACE!");
         libusb_release_interface(usb_handle, DATA_INTERFACE);
         libusb_close(usb_handle);
         return SR_ERR;
 
-    }
+    }    
 
     sdi->status = SR_ST_INACTIVE;
 
@@ -428,14 +431,22 @@ static int dev_close(struct sr_dev_inst * sdi) {
 
     if (usb_handle) {
 
+        struct timespec ts;
+        ts.tv_sec = 1;
+        ts.tv_nsec = 0;
+
+        nanosleep(&ts, NULL);
+
+        libusb_handle_events(NULL);
+
         result = libusb_release_interface(usb_handle, DATA_INTERFACE);
         if (result != LIBUSB_SUCCESS) {
             sr_log(SR_LOG_ERR, "Error releasing usb interface!");
         }
 
-        result = libusb_attach_kernel_driver(usb_handle, DATA_INTERFACE);
+        result = libusb_release_interface(usb_handle, CONTROL_INTERFACE);
         if (result != LIBUSB_SUCCESS) {
-            sr_log(SR_LOG_ERR, "Error attaching kernel driver to usb interface!");
+            sr_log(SR_LOG_ERR, "Error releasing usb interface!");
         }
 
         libusb_close(usb_handle);
@@ -456,25 +467,11 @@ static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
     init_mutex();
 
     int result = 0;
-
-    result = libusb_control_transfer(
-        usb_handle,
-        (uint32_t) LIBUSB_REQUEST_TYPE_CLASS | (uint32_t) LIBUSB_RECIPIENT_INTERFACE,
-        CDC_REQUEST_SET_CONTROL_LINE_STATE,
-        LINE_STATE_START,
-        CONT_INTERFACE,
-        NULL,
-        0,
-        1000
-    );
-    if (result < 0) {
-        sr_log(SR_LOG_ERR, "Couldn't start bulk transfer from recieving device!");
-        return SR_ERR;
-    }
-
     struct sr_dev_driver * di = devc->driver;
     struct drv_context * dr_ctx = di->context;
     struct sr_context * sr_ctx = dr_ctx->sr_ctx;
+
+    atomic_store(&devc->running, true);
 
     result = usb_source_add (
         sdi->session,
@@ -515,17 +512,25 @@ static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
         return SR_ERR;
     }
 
-    result = allocate_logic_descriptors(devc);
-    if (!result) {
-        sr_log(SR_LOG_ERR, "Couldn't allocate buffer for Logic channels descriptors!");
+    uint8_t signal [64] = {0};
+    signal[0] = START_DATA_TRANSFER;
 
-        result = usb_source_remove(sdi->session, sr_ctx);
-        if (result != SR_OK) {
-            sr_log(SR_LOG_ERR, "Couln't remove session!");
-            return result;
-        }
+    result = libusb_bulk_transfer (
+        usb_handle,
+        CONTROL_ENDPOINT_OUT,
+        signal,
+        64,
+        &actual_length,
+        1000
+    );
 
+    if (result != LIBUSB_SUCCESS) {
+        sr_log(SR_LOG_ERR, "Couldn't send start signal - %s!", libusb_error_name(result));
         return SR_ERR;
+    }
+
+    for (int i = 0; i < 6; i++) {
+        submit_async_transfer(usb_handle);
     }
 
     result = std_session_send_df_header(sdi);
@@ -555,38 +560,6 @@ static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
         return SR_ERR;
     }
 
-    devc->running = true;
-
-    pthread_t th;
-
-    result = pthread_create(&th, NULL, process_send, sdi);
-    if (result != 0) {
-        sr_log(SR_LOG_ERR, "Couln't start transmitting packets to PV!");
-
-
-        result = usb_source_remove(sdi->session, sr_ctx);
-        if (result != SR_OK) {
-            sr_log(SR_LOG_ERR, "Couln't remove session!");
-            return result;
-        }
-
-        return SR_ERR;
-    }
-
-    result = pthread_detach(th);
-    if (result != 0) {
-        sr_log(SR_LOG_ERR, "Couln't detach transmitting packets to PV!");
-
-
-        result = usb_source_remove(sdi->session, sr_ctx);
-        if (result != SR_OK) {
-            sr_log(SR_LOG_ERR, "Couln't remove session!");
-            return result;
-        }
-
-        return SR_ERR;
-    }
-
     return SR_OK;
 
 }
@@ -595,25 +568,9 @@ static int dev_acquisition_stop(struct sr_dev_inst * sdi) {
 
     struct dev_context * devc = (struct dev_context *) sdi->priv;
 
+    atomic_store(&devc->running, false);
+
     int result = 0;
-
-    result = libusb_control_transfer(
-        usb_handle,
-        (uint32_t) LIBUSB_REQUEST_TYPE_CLASS | (uint32_t) LIBUSB_RECIPIENT_INTERFACE,
-        CDC_REQUEST_SET_CONTROL_LINE_STATE,
-        LINE_STATE_STOP,
-        CONT_INTERFACE,
-        NULL,
-        0,
-        1000
-    );
-    if (result < 0) {
-        sr_log(SR_LOG_ERR, "Couldn't stop bulk transfer from recieving device!");
-        return SR_ERR;
-    }
-
-    devc->running = false;
-
     struct sr_dev_driver * di = devc->driver;
     struct drv_context * dr_ctx = di->context;
     struct sr_context * sr_ctx = dr_ctx->sr_ctx;
@@ -640,7 +597,6 @@ static int dev_acquisition_stop(struct sr_dev_inst * sdi) {
 
     g_free(devc->voltage_data);
     g_free(devc->current_data);
-    free_logic_descriptors(devc);
 
     return SR_OK;
 

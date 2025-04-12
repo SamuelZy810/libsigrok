@@ -1,90 +1,116 @@
 
 #include "protocol.h"
 
-pthread_mutex_t lock;
+pthread_mutex_t lock_analog;
+pthread_mutex_t lock_logic;
+static atomic_bool * running = NULL;
+static struct sr_dev_inst * sdi_con = NULL;
 
 void init_mutex() {
-    pthread_mutex_init(&lock, NULL);
+    pthread_mutex_init(&lock_analog, NULL);
+    pthread_mutex_init(&lock_logic, NULL);
 }
 
 void destroy_mutex() {
-    pthread_mutex_destroy(&lock);
+    pthread_mutex_destroy(&lock_analog);
+    pthread_mutex_destroy(&lock_logic);
 }
 
-/*
-* @brief Alokovanie deskriptorov pre kontex spracovávania logických kanálov
-*/
-bool allocate_logic_descriptors(struct dev_context * devc) {
+void submit_async_transfer(libusb_device_handle * handle) {
 
-    if (!devc) {
-        return false;
+    struct libusb_transfer * transfer = libusb_alloc_transfer(0);
+    if (!transfer) {
+        fprintf(stderr, "Failed to allocate libusb transfer!\n");
+        libusb_free_transfer(transfer);
+        return;
     }
 
-    struct logic_data * lg_data = NULL;
-    struct logic_data * first = NULL;
-    uint8_t * buffer = (uint8_t *) g_malloc0(LOGIC_CHANNELS_DESCRIPTORS * (LOGIC_DATA_SIZE + ANALOG_DATA_SIZE) * sizeof(uint8_t));
-
+    uint8_t * buffer = g_malloc0(64 * sizeof(uint8_t));
     if (!buffer) {
-        return false;
+        fprintf(stderr, "Failed to allocate buffer!\n");
+        libusb_free_transfer(transfer);
+        return;
     }
 
-    for (int i = 0; i < LOGIC_CHANNELS_DESCRIPTORS; i ++) {
+    libusb_fill_bulk_transfer(
+        transfer,
+        handle,
+        DATA_ENDPOINT_IN,
+        buffer,
+        64,
+        async_callback,
+        NULL,
+        0
+    );
 
-        lg_data = (struct logic_data *) g_malloc0(sizeof(struct logic_data));
-
-        if (!lg_data) {
-            return false;
-        }
-
-        lg_data->number = i;
-        lg_data->data = &buffer[i * (LOGIC_DATA_SIZE + ANALOG_DATA_SIZE)];
-        lg_data->filled = false;
-        lg_data->next = NULL;
-
-        if (!devc->logic_ptr) {
-            first = lg_data;
-            devc->logic_ptr = lg_data;
-        } else {
-            devc->logic_ptr->next = lg_data;
-            devc->logic_ptr = lg_data;
-        }
-
+    const int res = libusb_submit_transfer(transfer);
+    if (res != LIBUSB_SUCCESS) {
+        fprintf(stderr, "Failed to submit transfer: %s\n", libusb_error_name(res));
+        free(buffer);
+        libusb_free_transfer(transfer);
     }
-
-    devc->logic_ptr->next = first;
-    devc->logic_ptr = first;
-
-    return true;
 
 }
 
-/*
-* @brief Uvolnenie alokovanej pamäte deskriptorov
-*/
-void free_logic_descriptors(struct dev_context * devc) {
+void LIBUSB_CALL async_callback(struct libusb_transfer * transfer) {
 
-    struct logic_data * lg_data = devc->logic_ptr;
+    // Uvolniť data a odistť ak nastala chyba
+    if (transfer->status != LIBUSB_TRANSFER_COMPLETED) {
 
-    while (lg_data->number != 0) {
-        lg_data = lg_data->next;
+        free(transfer->buffer);
+        libusb_free_transfer(transfer);
+        return;
+
     }
 
-    g_free(lg_data->data);
+    if (transfer->buffer[0] == 0b00110011 && transfer->buffer[1] == 0b00110011) {
+        
+        // Spracovať logické data
 
-    while (true) {
+    } else if (transfer->buffer[0] == 0b11001100 && transfer->buffer[1] == 0b11001100) {
+       
+        // Spracovať analógové data
+        
+    }
 
-        if (lg_data->number == (LOGIC_CHANNELS_DESCRIPTORS - 1)) {
-            g_free(lg_data);
-            break;
-        } else {
-            struct logic_data * tmp = lg_data->next;
-            g_free(lg_data);
-            lg_data = tmp;
+    // Resubmit transfer
+    if (atomic_load(running)) submit_async_transfer(transfer->dev_handle);
+
+    // Clean up previous buffer and transfer struct
+    free(transfer->buffer);
+    libusb_free_transfer(transfer);
+}
+
+void send_analog() {
+
+}
+
+void send_logic(uint8_t * data, uint16_t size) {
+
+    pthread_mutex_lock(&lock_logic);
+
+    for (uint16_t i = 0; i < size; i ++) {
+
+        struct sr_datafeed_logic pckt_l = {
+            .length = sizeof(uint8_t) * LOGIC_CHANNELS / 8,
+            .unitsize = sizeof(uint8_t) * LOGIC_CHANNELS / 8,
+            .data = &data[i]
+        };
+    
+        struct sr_datafeed_packet packet_logic = {
+            .type = SR_DF_LOGIC,
+            .payload = &pckt_l
+        };
+        result = sr_session_send(sdi_con, &packet_logic);
+    
+        if (result == SR_ERR_ARG) {
+            sr_log(SR_LOG_ERR, "Couldn't send logic packet, invalid argument!");
+            return NULL;
         }
 
     }
 
-    devc->logic_ptr = NULL;
+    pthread_mutex_unlock(&lock_logic);
 
 }
 
@@ -96,10 +122,29 @@ void * process_send(void * data) {
 
     struct sr_dev_inst * sdi = (struct sr_dev_inst *) data;
     struct dev_context * devc = (struct dev_context *) sdi->priv;
-    struct logic_data * descriptor = devc->logic_ptr;
+    struct logic_data * descriptor;
     int result;
 
-    /*struct sr_analog_encoding analog_enc = {
+    GSList * channels = sdi->channels;
+    GSList * voltage_channels = NULL;
+    GSList * current_channels = NULL;
+
+    for (struct sr_channel * ch; channels != NULL; channels = channels->next) {
+
+        ch = channels->data;
+        if (ch->type == SR_CHANNEL_ANALOG) {
+            if (ch->name[0] == 'V') {
+                voltage_channels = g_slist_append(voltage_channels, ch);
+            } else {
+                current_channels = g_slist_append(current_channels, ch);
+            }
+        }
+
+    }
+
+    uint8_t logic_data = 0;
+
+    struct sr_analog_encoding analog_enc = {
         .unitsize = sizeof(float),
         .is_signed = FALSE,
         .is_float  = TRUE,
@@ -108,62 +153,98 @@ void * process_send(void * data) {
         .digits = 0,
         .scale = {1, 1},
         .offset = {0, 1}
-    };*/
+    };
 
     while (devc->running) {
 
-        // Nájdenie plného deskriptora
-        int starting_point = descriptor->number;
-        pthread_mutex_lock(&lock);
-        while (!descriptor->filled) {
-            descriptor = descriptor->next;
-            if (descriptor->number == starting_point) {
-                break;
-            }
-        }
-        pthread_mutex_unlock(&lock);
+        for (int i = 0; i < VOLTAGE_CHANNELS; i++) {
 
-        if (!descriptor->filled) {
-            continue;
-        }
-
-        sr_log(SR_LOG_ERR, "Found filled!");
-
-        // Odoslanie dát do PV
-
-        // Posielanie logickych signalov
-        while (descriptor->pointer != LOGIC_DATA_SIZE) {
-
-            struct sr_datafeed_logic pckt_l = {
-                .length = sizeof(uint8_t) * LOGIC_CHANNELS / 8,
-                .unitsize = sizeof(uint8_t) * LOGIC_CHANNELS / 8,
-                .data = &descriptor->data[descriptor->pointer]
+            struct sr_analog_meaning meaning = {
+                .mq = SR_MQ_VOLTAGE,
+                .unit = SR_UNIT_VOLT,
+                .mqflags = SR_MQFLAG_DC,
+                .channels = g_slist_nth(voltage_channels, i)
             };
-    
-            struct sr_datafeed_packet packet_logic = {
-                .type = SR_DF_LOGIC,
-                .payload = &pckt_l
+        
+            struct sr_analog_spec spec = {
+                .spec_digits = 0
             };
-            result = sr_session_send(sdi, &packet_logic);
-    
+        
+            struct sr_datafeed_analog pckt = {
+                .data = &devc->voltage_data[i],
+                .num_samples = 1,
+                .encoding = &analog_enc,
+                .meaning = &meaning,
+                .spec = &spec
+            };
+        
+            struct sr_datafeed_packet packet = {
+                .type = SR_DF_ANALOG,
+                .payload = &pckt
+            };
+
+            result = sr_session_send(sdi, &packet);
             if (result == SR_ERR_ARG) {
-                sr_log(SR_LOG_ERR, "Couldn't send logic packet, invalid argument!");
+                sr_log(SR_LOG_ERR, "Couldn't send voltage packet!");
                 return NULL;
             }
 
-            descriptor->pointer ++;
+        }
+
+        for (int i = 0; i < CURRENT_CHANNELS; i++) {
+
+            struct sr_analog_meaning meaning = {
+                .mq = SR_MQ_CURRENT,
+                .unit = SR_UNIT_AMPERE,
+                .mqflags = SR_MQFLAG_DC,
+                .channels = g_slist_nth(current_channels, i)
+            };
+        
+            struct sr_analog_spec spec = {
+                .spec_digits = 0
+            };
+        
+            struct sr_datafeed_analog pckt = {
+                .data = &devc->current_data[i],
+                .num_samples = 1,
+                .encoding = &analog_enc,
+                .meaning = &meaning,
+                .spec = &spec
+            };
+        
+            struct sr_datafeed_packet packet = {
+                .type = SR_DF_ANALOG,
+                .payload = &pckt
+            };
+
+            result = sr_session_send(sdi, &packet);
+            if (result == SR_ERR_ARG) {
+                sr_log(SR_LOG_ERR, "Couldn't send voltage packet!");
+                return NULL;
+            }
 
         }
-        descriptor->filled = false;
 
-        // Garantovanie času na YELD
-        struct timespec ts;
-        ts.tv_sec = 0;
-        ts.tv_nsec = 10 * 1000L;
+        struct sr_datafeed_logic pckt_l = {
+            .length = sizeof(uint8_t) * LOGIC_CHANNELS / 8,
+            .unitsize = sizeof(uint8_t) * LOGIC_CHANNELS / 8,
+            .data = &logic_data
+        };
 
-        nanosleep(&ts, NULL);
+        struct sr_datafeed_packet packet_logic = {
+            .type = SR_DF_LOGIC,
+            .payload = &pckt_l
+        };
+        result = sr_session_send(sdi, &packet_logic);
+
+        if (result == SR_ERR_ARG) {
+            sr_log(SR_LOG_ERR, "Couldn't send logic packet, invalid argument!");
+            return NULL;
+        }
 
     }
+
+    sr_log(SR_LOG_ERR, "Exiting!");
 
     return NULL;
 
@@ -181,132 +262,16 @@ int acquisition_callback(int fd, int events, void * cb_data) {
     // Získanie potrebných premenných
     struct sr_dev_inst * sdi = (struct sr_dev_inst *) cb_data;
     struct dev_context * devc = (struct dev_context *) sdi->priv;
-    struct logic_data * descriptor = devc->logic_ptr;
 
-    // Nájdenie prázdneho deskriptora
-
-    int starting_point = descriptor->number;
-    pthread_mutex_lock(&lock);
-    while (descriptor->filled) {
-        descriptor = descriptor->next;
-        if (descriptor->number == starting_point) {
-            break;
-        }
-    }
-    pthread_mutex_unlock(&lock);
-
-    if (descriptor->filled) {
-        return true;
+    running = &devc->running;
+    sdi_con = sdi;
+    
+    while (atomic_load(&devc->running)) {
+        
+        libusb_handle_events_completed(NULL, NULL);
+        
     }
 
-    sr_log(SR_LOG_ERR, "Found not filled!");
-
-    // Prijatie dát
-    int length = 0;
-    int result = libusb_bulk_transfer(
-        devc->usb_handle,
-        DATA_ENDPOINT_IN,
-        descriptor->data,
-        sizeof(descriptor->data),
-        &length,
-        1000
-    );
-
-    if (result != LIBUSB_SUCCESS) {
-        return SR_ERR;
-    }
-
-    // Spracovanie prijatých dát
-    if (length == LOGIC_DATA_SIZE) {
-
-        if (descriptor->data[TYPE_FIELD] != (uint8_t) DATA_LOGIC) {
-            sr_log(SR_LOG_ERR, "The usb packet came in unexpected type!");
-            return SR_ERR;
-        }
-
-        descriptor->filled = true;
-        descriptor->pointer = HEADER_SIZE + 1;
-
-    } else if (length == ANALOG_DATA_SIZE) {
-
-        if (descriptor->data[TYPE_FIELD] != (uint8_t) DATA_ANALOG) {
-            sr_log(SR_LOG_ERR, "The usb packet came in unexpected type!");
-            return SR_ERR;
-        }
-
-        uint8_t channel_id = 0;
-        for (int i = 0; i < (length - HEADER_SIZE) / ANALOG_CHANNEL_SIZE; i ++) {
-
-            channel_id = descriptor->data[HEADER_SIZE + i * ANALOG_CHANNEL_SIZE];
-            if (channel_id & (uint8_t) VOLTAGE) {
-
-                devc->voltage_data[descriptor->data[HEADER_SIZE + i * ANALOG_CHANNEL_SIZE] & 0x7f] = \
-                *((float * ) &descriptor->data[HEADER_SIZE + i * ANALOG_CHANNEL_SIZE + 1]);
-
-            } else {
-
-                devc->current_data[descriptor->data[HEADER_SIZE + i * ANALOG_CHANNEL_SIZE] & 0x7f] = \
-                *((float * ) &descriptor->data[HEADER_SIZE + i * ANALOG_CHANNEL_SIZE + 1]);
-
-            }
-
-        }
-
-    } else if (length == (LOGIC_DATA_SIZE + ANALOG_DATA_SIZE)) {
-
-        if (descriptor->data[TYPE_FIELD] == (uint8_t) DATA_ANALOG && descriptor->data[TYPE_FIELD + ANALOG_DATA_SIZE] == (uint8_t) DATA_LOGIC) {
-
-            uint8_t channel_id = 0;
-            for (int i = 0; i < (length - HEADER_SIZE) / ANALOG_CHANNEL_SIZE; i ++) {
-
-                channel_id = descriptor->data[HEADER_SIZE + i * ANALOG_CHANNEL_SIZE];
-                if (channel_id & (uint8_t) VOLTAGE) {
-
-                    devc->voltage_data[descriptor->data[HEADER_SIZE + i * ANALOG_CHANNEL_SIZE] & 0x7f] = \
-                    *((float * ) &descriptor->data[HEADER_SIZE + i * ANALOG_CHANNEL_SIZE + 1]);
-
-                } else {
-
-                    devc->current_data[descriptor->data[HEADER_SIZE + i * ANALOG_CHANNEL_SIZE] & 0x7f] = \
-                    *((float * ) &descriptor->data[HEADER_SIZE + i * ANALOG_CHANNEL_SIZE + 1]);
-
-                }
-
-            }
-
-            descriptor->filled = true;
-            descriptor->pointer = ANALOG_DATA_SIZE + HEADER_SIZE + 1;
-
-        } else {
-
-            uint8_t channel_id = 0;
-            for (int i = 0; i < (length - HEADER_SIZE - LOGIC_DATA_SIZE) / ANALOG_CHANNEL_SIZE; i ++) {
-
-                channel_id = descriptor->data[HEADER_SIZE + LOGIC_DATA_SIZE + i * ANALOG_CHANNEL_SIZE];
-                if (channel_id & (uint8_t) VOLTAGE) {
-
-                    devc->voltage_data[descriptor->data[HEADER_SIZE + LOGIC_DATA_SIZE + i * ANALOG_CHANNEL_SIZE] & 0x7f] = \
-                    *((float * ) &descriptor->data[HEADER_SIZE + LOGIC_DATA_SIZE + i * ANALOG_CHANNEL_SIZE + 1]);
-
-                } else {
-
-                    devc->current_data[descriptor->data[HEADER_SIZE + LOGIC_DATA_SIZE + i * ANALOG_CHANNEL_SIZE] & 0x7f] = \
-                    *((float * ) &descriptor->data[HEADER_SIZE + LOGIC_DATA_SIZE + i * ANALOG_CHANNEL_SIZE + 1]);
-
-                }
-
-            }
-
-            descriptor->filled = true;
-            descriptor->pointer = HEADER_SIZE + 1;
-
-        }
-
-    } else {
-        sr_log(SR_LOG_ERR, "The usb packet came in unexpected size!");
-        return SR_ERR;
-    }
-
-    return TRUE;
+    return SR_OK;
 
 }
