@@ -10,8 +10,9 @@ pthread_mutex_t lock_logic;
 static atomic_bool * running = NULL;
 
 // Premenné potrebné na odosielanie packetov na frontend
-static struct sr_dev_inst * sdi_out = NULL;
+static const struct sr_dev_inst * sdi_out = NULL;
 static struct dev_context * devc_out = NULL;
+
 static GSList * voltage_channels = NULL;
 static GSList * current_channels = NULL;
 
@@ -32,14 +33,43 @@ static struct sr_analog_encoding analog_enc = {
 // PROCESS: Nastavenie a zdeštruovanie mutexov
 //          Ideálne volať pri začatí / skončení akvizície zariadenia
 
-void init_mutex() {
+void init_mutex(void) {
     pthread_mutex_init(&lock_analog, NULL);
     pthread_mutex_init(&lock_logic, NULL);
 }
 
-void destroy_mutex() {
+void destroy_mutex(void) {
     pthread_mutex_destroy(&lock_analog);
     pthread_mutex_destroy(&lock_logic);
+}
+
+// PROCESS: Inicializácia potrebných parametrov a premenných
+
+void init_it(const struct sr_dev_inst * sdi) {
+
+    struct dev_context * devc = (struct dev_context *) sdi->priv;
+
+    // Nastavenie globálnych premenných
+    running = &devc->running;
+    sdi_out = sdi;
+    devc_out = devc;
+
+    // Inicializovanie analógových kanálov
+    GSList * channels = sdi->channels;
+
+    for (struct sr_channel * ch; channels != NULL; channels = channels->next) {
+
+        ch = channels->data;
+        if (ch->type == SR_CHANNEL_ANALOG) {
+            if (ch->name[0] == 'V') {
+                voltage_channels = g_slist_append(voltage_channels, ch);
+            } else {
+                current_channels = g_slist_append(current_channels, ch);
+            }
+        }
+
+    }
+
 }
 
 // PROCESS: Spracovávanie USB bulk transakcií
@@ -48,14 +78,14 @@ void submit_async_transfer(libusb_device_handle * handle) {
 
     struct libusb_transfer * transfer = libusb_alloc_transfer(0);
     if (!transfer) {
-        fprintf(stderr, "Failed to allocate libusb transfer!\n");
+        sr_log(SR_LOG_ERR, "Failed to allocate libusb transfer!");
         libusb_free_transfer(transfer);
         return;
     }
 
     uint8_t * buffer = g_malloc0(64 * sizeof(uint8_t));
     if (!buffer) {
-        fprintf(stderr, "Failed to allocate buffer!\n");
+        sr_log(SR_LOG_ERR, "Failed to allocate buffer!");
         libusb_free_transfer(transfer);
         return;
     }
@@ -73,7 +103,7 @@ void submit_async_transfer(libusb_device_handle * handle) {
 
     const int res = libusb_submit_transfer(transfer);
     if (res != LIBUSB_SUCCESS) {
-        fprintf(stderr, "Failed to submit transfer: %s\n", libusb_error_name(res));
+        sr_log(SR_LOG_ERR, "Failed to submit transfer: %s", libusb_error_name(res));
         free(buffer);
         libusb_free_transfer(transfer);
     }
@@ -91,39 +121,45 @@ void LIBUSB_CALL async_callback(struct libusb_transfer * transfer) {
 
     }
 
-    // Packet obsahuje LOGICKÉ DATA
-    if (transfer->buffer[0] == 0b00110011 && transfer->buffer[1] == 0b00110011) {
+    if (transfer->actual_length > 0) {
+
+        sr_log(SR_LOG_ERR, "%d", transfer->actual_length);
+
+        // Packet obsahuje LOGICKÉ DATA
+        if (transfer->buffer[0] == 0b00110011 && transfer->buffer[1] == 0b00110011) {
+            
+            // Spracovať logické data
+            //send_logic_packet(&transfer->buffer[10], 54);
+
+        }
+        // Packet obsahuje ANALÓGOVÉ DATA
+        else if (transfer->buffer[0] == 0b11001100 && transfer->buffer[1] == 0b11001100) {
+
+            uint8_t offset = 10;
         
-        // Spracovať logické data
-        send_logic(&transfer->buffer[10], 54);
+            // Spracovať analógové data
+            for (int i = 0; i < ANALOG_CHANNELS; i++) {
 
-    }
-    // Packet obsahuje ANALÓGOVÉ DATA
-    else if (transfer->buffer[0] == 0b11001100 && transfer->buffer[1] == 0b11001100) {
+                float value = * ((float *) &transfer->buffer[offset + i * ANALOG_CHANNEL_SIZE + 1]);
 
-        uint8_t offset = 10;
-       
-        // Spracovať analógové data
-        for (int i = 0; i < ANALOG_CHANNELS; i++) {
+                if ((transfer->buffer[offset + i * ANALOG_CHANNEL_SIZE] & CH_MASK) == CURRENT_CH) {
 
-            float value = * ((float *) transfer->buffer[offset + i * ANALOG_CHANNEL_SIZE + 1]);
+                    // Uloženie hodnoty prúdu na svoje miesto
+                    devc_out->current_data[i] = value;
 
-            if (transfer->buffer[offset + i * ANALOG_CHANNEL_SIZE] & CH_MASK == CURRENT_CH) {
+                } else {
 
-                // Uloženie hodnoty prúdu na svoje miesto
-                devc_out->current_data[i] = value;
+                    // Uloženie hodnoty napätia na svoje miesto
+                    devc_out->voltage_data[i] = value;
 
-            } else {
-
-                // Uloženie hodnoty napätia na svoje miesto
-                devc_out->voltage_data[i] = value;
+                }
 
             }
 
+            //send_analog_packet();
+            
         }
 
-        send_analog();
-        
     }
 
     // Resubmit transfer
@@ -136,11 +172,11 @@ void LIBUSB_CALL async_callback(struct libusb_transfer * transfer) {
 
 // PROCESS: Odosielanie packetov na frontend - PulseView
 
-void send_analog() {
+void send_analog_packet(void) {
 
     int result = SR_OK;
 
-    pthread_mutex_lock(&lock_analog);
+    //pthread_mutex_lock(&lock_analog);
 
     for (int i = 0; i < VOLTAGE_CHANNELS; i++) {
 
@@ -168,10 +204,10 @@ void send_analog() {
             .payload = &pckt
         };
 
-        result = sr_session_send(sdi, &packet);
+        result = sr_session_send(sdi_out, &packet);
         if (result == SR_ERR_ARG) {
             sr_log(SR_LOG_ERR, "Couldn't send voltage packet!");
-            return NULL;
+            break;
         }
 
     }
@@ -202,24 +238,28 @@ void send_analog() {
             .payload = &pckt
         };
 
-        result = sr_session_send(sdi, &packet);
+        result = sr_session_send(sdi_out, &packet);
         if (result == SR_ERR_ARG) {
             sr_log(SR_LOG_ERR, "Couldn't send voltage packet!");
-            return NULL;
+            break;
         }
 
     }
 
-    pthread_mutex_unlock(&lock_analog);
+    //pthread_mutex_unlock(&lock_analog);
 
 }
 
-void send_logic(uint8_t * data, uint16_t size) {
+void send_logic_packet(uint8_t * data, uint16_t size) {
+
+    int result = SR_OK;
 
     pthread_mutex_lock(&lock_logic);
 
     for (uint16_t i = 0; i < size; i ++) {
 
+        send_analog_packet();
+    
         struct sr_datafeed_logic pckt_l = {
             .length = sizeof(uint8_t) * LOGIC_CHANNELS / 8,
             .unitsize = sizeof(uint8_t) * LOGIC_CHANNELS / 8,
@@ -249,38 +289,32 @@ int acquisition_callback(int fd, int events, void * cb_data) {
 
     (void) fd;
     (void) events;
-    
-    // Získanie potrebných premenných
-    struct sr_dev_inst * sdi = (struct sr_dev_inst *) cb_data;
-    struct dev_context * devc = (struct dev_context *) sdi->priv;
+    (void) cb_data;
 
-    // Nastavenie globálnych premenných
-    running = &devc->running;
-    sdi_out = sdi;
-    devc_out = devc;
-
-    // Inicializovanie analógových kanálov
-    GSList * channels = sdi->channels;
-
-    for (struct sr_channel * ch; channels != NULL; channels = channels->next) {
-
-        ch = channels->data;
-        if (ch->type == SR_CHANNEL_ANALOG) {
-            if (ch->name[0] == 'V') {
-                voltage_channels = g_slist_append(voltage_channels, ch);
-            } else {
-                current_channels = g_slist_append(current_channels, ch);
-            }
-        }
-
-    }
-    
-    while (atomic_load(&devc->running)) {
-        
-        libusb_handle_events_completed(NULL, NULL);
-        
+    if (!devc_out && !devc_out->usb_handle) {
+        sr_log(SR_LOG_ERR, "No handle");
     }
 
-    return SR_OK;
+    uint8_t data [64] = {0};
+
+    int actual_length = 0;
+
+    int result = libusb_bulk_transfer (
+        devc_out->usb_handle,
+        DATA_ENDPOINT_IN,
+        data,
+        64,
+        &actual_length,
+        0
+    );
+
+    if (result != LIBUSB_SUCCESS) {
+        sr_log(SR_LOG_ERR, "Couldn't send start signal - %s!", libusb_error_name(result));
+        return SR_ERR;
+    }
+
+    if (actual_length) sr_log(SR_LOG_ERR, "%d", actual_length);
+
+    return RUN;
 
 }

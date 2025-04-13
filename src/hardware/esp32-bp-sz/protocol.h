@@ -54,6 +54,7 @@ enum channel_type {
 };
 
 #define CH_MASK 0x80
+#define RUN 1
 
 // Deklarovanie deskriptora zariadenia
 
@@ -88,12 +89,18 @@ struct dev_context {
 /*
 * @brief
 */
-void init_mutex();
+void init_mutex(void);
 
 /*
 * @brief
 */
-void destroy_mutex();
+void destroy_mutex(void);
+
+/*
+* @brief
+* @param
+*/
+void init_it(const struct sr_dev_inst * sdi);
 
 /*
 * @brief
@@ -110,14 +117,14 @@ void LIBUSB_CALL async_callback(struct libusb_transfer * transfer);
 /*
 * @brief
 */
-void send_analog();
+void send_analog_packet(void);
 
 /*
 * @brief
 * @param
 * @param
 */
-void send_logic(uint8_t * data, uint16_t size);
+void send_logic_packet(uint8_t * data, uint16_t size);
 
 /*
 * @brief Funkcia, ktorá je volaná na pozadí pri spracovaní USB dát prijaych z ESP32
