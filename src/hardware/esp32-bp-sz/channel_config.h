@@ -11,4 +11,7 @@
 // Počet kanálov pre logické merania
 #define LOGIC_CHANNELS 8
 
+// Počet analógových kanálov spolu
+#define ANALOG_CHANNELS VOLTAGE_CHANNELS + CURRENT_CHANNELS
+
 #endif

@@ -10,6 +10,11 @@ static struct libusb_device_handle * usb_handle = NULL;
 
 // PROCESS: Inicializácia
 
+/*
+* @brief
+* @param
+* @param
+*/
 static int init(struct sr_dev_driver * di, struct sr_context * sr_ctx) {
 
     int res = std_init(di, sr_ctx);
@@ -28,6 +33,10 @@ static int init(struct sr_dev_driver * di, struct sr_context * sr_ctx) {
 
 }
 
+/*
+* @brief
+* @param
+*/
 static int cleanup(const struct sr_dev_driver * di) {
 
     if (!di || !di->context) {
@@ -56,6 +65,11 @@ static int cleanup(const struct sr_dev_driver * di) {
 
 }
 
+/*
+* @brief
+* @param
+* @param
+*/
 static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 
     (void) options;
@@ -197,6 +211,13 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 
 // PROCESS: Konfigurácia
 
+/*
+* @brief
+* @param
+* @param
+* @param
+* @param
+*/
 static int config_get(uint32_t key, GVariant ** data,
 	const struct sr_dev_inst * sdi, const struct sr_channel_group * cg) {
 
@@ -257,6 +278,13 @@ static int config_get(uint32_t key, GVariant ** data,
 
 }
 
+/*
+* @brief
+* @param
+* @param
+* @param
+* @param
+*/
 static int config_set(uint32_t key, GVariant * data,
 	const struct sr_dev_inst * sdi, const struct sr_channel_group * cg) {
 
@@ -292,6 +320,13 @@ static int config_set(uint32_t key, GVariant * data,
 
 }
 
+/*
+* @brief
+* @param
+* @param
+* @param
+* @param
+*/
 static int config_list(uint32_t key, GVariant ** data,
 	const struct sr_dev_inst * sdi, const struct sr_channel_group * cg) {
 
@@ -340,6 +375,10 @@ static int config_list(uint32_t key, GVariant ** data,
 
 // PROCESS: Otvorenie a zatvorenie zariadenia
 
+/*
+* @brief
+* @param
+*/
 static int dev_open(struct sr_dev_inst * sdi) {
 
     struct dev_context * devc = (struct dev_context *) sdi->priv;
@@ -423,6 +462,10 @@ static int dev_open(struct sr_dev_inst * sdi) {
 
 }
 
+/*
+* @brief
+* @param
+*/
 static int dev_close(struct sr_dev_inst * sdi) {
 
     int result = 0;
@@ -460,6 +503,10 @@ static int dev_close(struct sr_dev_inst * sdi) {
 
 // PROCESS: Akvizícia a čítanie
 
+/*
+* @brief
+* @param
+*/
 static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
 
     struct dev_context * devc = (struct dev_context *) sdi->priv;
@@ -509,6 +556,7 @@ static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
             return result;
         }
 
+        g_free(devc->voltage_data);
         return SR_ERR;
     }
 
@@ -564,6 +612,10 @@ static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
 
 }
 
+/*
+* @brief
+* @param
+*/
 static int dev_acquisition_stop(struct sr_dev_inst * sdi) {
 
     struct dev_context * devc = (struct dev_context *) sdi->priv;

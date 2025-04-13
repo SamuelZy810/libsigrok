@@ -49,6 +49,12 @@ enum measured_quantity {
     VOLTS, MILI_VOLTS, AMPERES, MILI_AMPERES, MICRO_AMPERES
 };
 
+enum channel_type {
+    CURRENT_CH = 0, VOLTAGE_CH = 0x80
+};
+
+#define CH_MASK 0x80
+
 // Deklarovanie deskriptora zariadenia
 
 struct dev_context {
@@ -79,18 +85,47 @@ struct dev_context {
 
 // Deklarovanie protokolových funkcii
 
+/*
+* @brief
+*/
 void init_mutex();
 
+/*
+* @brief
+*/
 void destroy_mutex();
 
+/*
+* @brief
+* @param handle
+*/
 void submit_async_transfer(libusb_device_handle * handle);
 
-void send_analog();
-
-void send_logic(uint8_t * data, uint16_t size);
-
+/*
+* @brief
+* @param
+*/
 void LIBUSB_CALL async_callback(struct libusb_transfer * transfer);
 
+/*
+* @brief
+*/
+void send_analog();
+
+/*
+* @brief
+* @param
+* @param
+*/
+void send_logic(uint8_t * data, uint16_t size);
+
+/*
+* @brief Funkcia, ktorá je volaná na pozadí pri spracovaní USB dát prijaych z ESP32
+*           Táto funkcia spracuje prijatédáta a spracovanie je delegované ďalšiemu procesu.
+* @param
+* @param
+* @param
+*/
 int acquisition_callback(int fd, int events, void * cb_data);
 
 #endif
