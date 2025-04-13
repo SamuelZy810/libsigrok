@@ -309,11 +309,24 @@ int acquisition_callback(int fd, int events, void * cb_data) {
     );
 
     if (result != LIBUSB_SUCCESS) {
-        sr_log(SR_LOG_ERR, "Couldn't send start signal - %s!", libusb_error_name(result));
+        sr_log(SR_LOG_ERR, "ERROR - %s!", libusb_error_name(result));
         return SR_ERR;
     }
 
-    if (actual_length) sr_log(SR_LOG_ERR, "%d", actual_length);
+    if (actual_length > 0) {
+
+        if (data[0] == 0b00110011 && data[1] == 0b00110011) {
+            
+            sr_log(SR_LOG_ERR, "LOGIC");
+
+
+        } else if (data[0] == 0b11001100 && data[1] == 0b11001100) {
+            
+            sr_log(SR_LOG_ERR, "ANALOG");
+
+        }
+
+    }
 
     return RUN;
 

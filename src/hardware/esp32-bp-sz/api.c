@@ -396,7 +396,12 @@ static int dev_open(struct sr_dev_inst * sdi) {
         return SR_ERR;
     }
 
-    devc->usb_handle = usb_handle;
+    // Resetovanie USB kontextu pre zariadenia
+    /*result = libusb_reset_device(usb_handle);
+    if (result != LIBUSB_SUCCESS) {
+        sr_log(SR_LOG_ERR, "Couldn't reset device - %s!", libusb_error_name(result));
+        return SR_ERR;
+    }*/
 
     result = libusb_set_configuration(usb_handle, 1);
     if (result != LIBUSB_SUCCESS) {
@@ -405,10 +410,10 @@ static int dev_open(struct sr_dev_inst * sdi) {
         return SR_ERR;
     }  
     
-    result = libusb_kernel_driver_active(devc->usb_handle, DATA_INTERFACE);
+    result = libusb_kernel_driver_active(usb_handle, DATA_INTERFACE);
     if (result) {
 
-        result = libusb_detach_kernel_driver(devc->usb_handle, DATA_INTERFACE);
+        result = libusb_detach_kernel_driver(usb_handle, DATA_INTERFACE);
         if (result != LIBUSB_SUCCESS) {
             sr_log(SR_LOG_ERR, "Kernel detach failed - DATA_INTERFACE!");
             libusb_close(usb_handle);
@@ -417,10 +422,10 @@ static int dev_open(struct sr_dev_inst * sdi) {
 
     }
 
-    result = libusb_kernel_driver_active(devc->usb_handle, CONTROL_INTERFACE);
+    result = libusb_kernel_driver_active(usb_handle, CONTROL_INTERFACE);
     if (result) {
 
-        result = libusb_detach_kernel_driver(devc->usb_handle, CONTROL_INTERFACE);
+        result = libusb_detach_kernel_driver(usb_handle, CONTROL_INTERFACE);
         if (result != LIBUSB_SUCCESS) {
             sr_log(SR_LOG_ERR, "Kernel detach failed - CONTROL_INTERFACE!");
             libusb_close(usb_handle);
@@ -428,6 +433,28 @@ static int dev_open(struct sr_dev_inst * sdi) {
         }
 
     }
+
+    // Získanie USB interfacov zariadenia ESP32
+    result = libusb_claim_interface(usb_handle, DATA_INTERFACE);
+    if (result != LIBUSB_SUCCESS) {
+
+        sr_log(SR_LOG_ERR, "Claim interface failed - DATA_INTERFACE!");
+        destroy_mutex();
+        return SR_ERR;
+
+    }
+
+    result = libusb_claim_interface(usb_handle, CONTROL_INTERFACE);
+    if (result != LIBUSB_SUCCESS) {
+
+        sr_log(SR_LOG_ERR, "Claim interface failed - CONTROL_INTERFACE!");
+        libusb_release_interface(usb_handle, DATA_INTERFACE);
+        destroy_mutex();
+        return SR_ERR;
+
+    }
+
+    devc->usb_handle = usb_handle;
 
     sdi->status = SR_ST_ACTIVE;
 
@@ -441,9 +468,29 @@ static int dev_open(struct sr_dev_inst * sdi) {
 */
 static int dev_close(struct sr_dev_inst * sdi) {
 
+    struct dev_context * devc = (struct dev_context *) sdi->priv;
+
+    if (!devc && !usb_device) {
+        sr_log(SR_LOG_ERR, "The device descriptor is not allocated!");
+        return SR_ERR;
+    }
+
+    int result = 0;
+
     sdi->status = SR_ST_STOPPING;
 
     if (usb_handle) {
+        
+        // Uvolnenie rozhraní
+        result = libusb_release_interface(devc->usb_handle, DATA_INTERFACE);
+        if (result != LIBUSB_SUCCESS) {
+            sr_log(SR_LOG_ERR, "Error releasing usb interface!");
+        }
+    
+        result = libusb_release_interface(devc->usb_handle, CONTROL_INTERFACE);
+        if (result != LIBUSB_SUCCESS) {
+            sr_log(SR_LOG_ERR, "Error releasing usb interface!");
+        }
 
         libusb_close(usb_handle);
         usb_handle = NULL;
@@ -469,33 +516,6 @@ static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
     // Inicializácia mutexu a premenných pre protocol
     init_mutex();
     init_it(sdi);
-
-    // Resetovanie USB kontextu pre zariadenia
-    result = libusb_reset_device(devc->usb_handle);
-    if (result != LIBUSB_SUCCESS) {
-        sr_log(SR_LOG_ERR, "Couldn't reset device - %s!", libusb_error_name(result));
-        return SR_ERR;
-    }
-
-    // Získanie USB interfacov zariadenia ESP32
-    result = libusb_claim_interface(devc->usb_handle, DATA_INTERFACE);
-    if (result != LIBUSB_SUCCESS) {
-
-        sr_log(SR_LOG_ERR, "Claim interface failed - DATA_INTERFACE!");
-        destroy_mutex();
-        return SR_ERR;
-
-    }
-
-    result = libusb_claim_interface(devc->usb_handle, CONTROL_INTERFACE);
-    if (result != LIBUSB_SUCCESS) {
-
-        sr_log(SR_LOG_ERR, "Claim interface failed - CONTROL_INTERFACE!");
-        libusb_release_interface(devc->usb_handle, DATA_INTERFACE);
-        destroy_mutex();
-        return SR_ERR;
-
-    }
 
     // Zapnutie procesu
     atomic_store(&devc->running, true);
@@ -552,9 +572,7 @@ static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
 
         g_free(devc->voltage_data);
         g_free(devc->current_data);
-        
-        libusb_release_interface(devc->usb_handle, DATA_INTERFACE);
-        libusb_release_interface(devc->usb_handle, CONTROL_INTERFACE);
+
         destroy_mutex();
 
         result = usb_source_remove(sdi->session, sr_ctx);
@@ -569,6 +587,11 @@ static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
     result = std_session_send_df_header(sdi);
     if (result != SR_OK) {
         sr_log(SR_LOG_ERR, "Couln't send session header!");
+
+        g_free(devc->voltage_data);
+        g_free(devc->current_data);
+
+        destroy_mutex();
 
         result = usb_source_remove(sdi->session, sr_ctx);
         if (result != SR_OK) {
@@ -585,9 +608,7 @@ static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
 
         g_free(devc->voltage_data);
         g_free(devc->current_data);
-        
-        libusb_release_interface(devc->usb_handle, DATA_INTERFACE);
-        libusb_release_interface(devc->usb_handle, CONTROL_INTERFACE);
+
         destroy_mutex();
 
         result = usb_source_remove(sdi->session, sr_ctx);
@@ -618,8 +639,6 @@ static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
         g_free(devc->voltage_data);
         g_free(devc->current_data);
         
-        libusb_release_interface(devc->usb_handle, DATA_INTERFACE);
-        libusb_release_interface(devc->usb_handle, CONTROL_INTERFACE);
         destroy_mutex();
 
         return SR_ERR;
@@ -668,17 +687,6 @@ static int dev_acquisition_stop(struct sr_dev_inst * sdi) {
 
     // Spracovanie zostatkových packetov - všetkých, aj nedokončených
     //libusb_handle_events(NULL);
-
-    // Uvolnenie rozhraní
-    result = libusb_release_interface(devc->usb_handle, DATA_INTERFACE);
-    if (result != LIBUSB_SUCCESS) {
-        sr_log(SR_LOG_ERR, "Error releasing usb interface!");
-    }
-
-    result = libusb_release_interface(devc->usb_handle, CONTROL_INTERFACE);
-    if (result != LIBUSB_SUCCESS) {
-        sr_log(SR_LOG_ERR, "Error releasing usb interface!");
-    }
 
     // Uvolenie mutexu
     destroy_mutex();
