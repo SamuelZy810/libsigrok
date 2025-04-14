@@ -86,47 +86,47 @@ struct dev_context {
 
 // Deklarovanie protokolových funkcii
 
-/*
+/**
 * @brief
 */
 void init_mutex(void);
 
-/*
+/**
 * @brief
 */
 void destroy_mutex(void);
 
-/*
+/**
 * @brief
 * @param
 */
-void init_it(const struct sr_dev_inst * sdi);
+void init_it(const struct sr_dev_inst * sdi, struct libusb_context * lib_ctx);
 
-/*
+/**
 * @brief
 * @param handle
 */
 void submit_async_transfer(libusb_device_handle * handle);
 
-/*
+/**
 * @brief
 * @param
 */
 void LIBUSB_CALL async_callback(struct libusb_transfer * transfer);
 
-/*
+/**
 * @brief
 */
 void send_analog_packet(void);
 
-/*
+/**
 * @brief
 * @param
 * @param
 */
 void send_logic_packet(uint8_t * data, uint16_t size);
 
-/*
+/**
 * @brief Funkcia, ktorá je volaná na pozadí pri spracovaní USB dát prijaych z ESP32
 *           Táto funkcia spracuje prijatédáta a spracovanie je delegované ďalšiemu procesu.
 * @param
@@ -134,5 +134,11 @@ void send_logic_packet(uint8_t * data, uint16_t size);
 * @param
 */
 int acquisition_callback(int fd, int events, void * cb_data);
+
+/**
+* @brief
+* @param
+*/
+void * acquisition_function(void * nic);
 
 #endif

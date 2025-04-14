@@ -12,6 +12,7 @@ static atomic_bool * running = NULL;
 // Premenné potrebné na odosielanie packetov na frontend
 static const struct sr_dev_inst * sdi_out = NULL;
 static struct dev_context * devc_out = NULL;
+static struct libusb_context * ctx = NULL;
 
 static GSList * voltage_channels = NULL;
 static GSList * current_channels = NULL;
@@ -45,7 +46,7 @@ void destroy_mutex(void) {
 
 // PROCESS: Inicializácia potrebných parametrov a premenných
 
-void init_it(const struct sr_dev_inst * sdi) {
+void init_it(const struct sr_dev_inst * sdi, struct libusb_context * lib_ctx) {
 
     struct dev_context * devc = (struct dev_context *) sdi->priv;
 
@@ -53,6 +54,7 @@ void init_it(const struct sr_dev_inst * sdi) {
     running = &devc->running;
     sdi_out = sdi;
     devc_out = devc;
+    ctx = lib_ctx;
 
     // Inicializovanie analógových kanálov
     GSList * channels = sdi->channels;
@@ -117,13 +119,12 @@ void LIBUSB_CALL async_callback(struct libusb_transfer * transfer) {
 
         free(transfer->buffer);
         libusb_free_transfer(transfer);
+        sr_log(SR_LOG_ERR, "Error in packet handle");
         return;
 
     }
 
     if (transfer->actual_length > 0) {
-
-        sr_log(SR_LOG_ERR, "%d", transfer->actual_length);
 
         // Packet obsahuje LOGICKÉ DATA
         if (transfer->buffer[0] == 0b00110011 && transfer->buffer[1] == 0b00110011) {
@@ -285,48 +286,64 @@ void send_logic_packet(uint8_t * data, uint16_t size) {
 
 // PROCESS: Riadenie začatia akvizície
 
-int acquisition_callback(int fd, int events, void * cb_data) {
+void * acquisition_function(void * nic) {
 
-    (void) fd;
-    (void) events;
-    (void) cb_data;
+    (void) nic;
 
     if (!devc_out && !devc_out->usb_handle) {
         sr_log(SR_LOG_ERR, "No handle");
     }
 
     uint8_t data [64] = {0};
-
     int actual_length = 0;
+    int result = 0;
+    
+    while (atomic_load(running)) {
 
-    int result = libusb_bulk_transfer (
-        devc_out->usb_handle,
-        DATA_ENDPOINT_IN,
-        data,
-        64,
-        &actual_length,
-        0
-    );
-
-    if (result != LIBUSB_SUCCESS) {
-        sr_log(SR_LOG_ERR, "ERROR - %s!", libusb_error_name(result));
-        return SR_ERR;
-    }
-
-    if (actual_length > 0) {
-
-        if (data[0] == 0b00110011 && data[1] == 0b00110011) {
-            
-            sr_log(SR_LOG_ERR, "LOGIC");
-
-
-        } else if (data[0] == 0b11001100 && data[1] == 0b11001100) {
-            
-            sr_log(SR_LOG_ERR, "ANALOG");
-
+        result = libusb_bulk_transfer (
+            devc_out->usb_handle,
+            DATA_ENDPOINT_IN,
+            data,
+            64,
+            &actual_length,
+            0
+        );
+    
+        if (result != LIBUSB_SUCCESS) {
+            sr_log(SR_LOG_ERR, "ERROR - %s!", libusb_error_name(result));
+            return NULL;
+        }
+    
+        if (actual_length > 0) {
+    
+            if (data[0] == 0b00110011 && data[1] == 0b00110011) {
+                
+                sr_log(SR_LOG_ERR, "LOGIC");
+    
+    
+            } else if (data[0] == 0b11001100 && data[1] == 0b11001100) {
+                
+                sr_log(SR_LOG_ERR, "ANALOG");
+    
+            }
+    
         }
 
     }
+    sr_log(SR_LOG_ERR, "I am out of here!");
+
+    return NULL;
+
+}
+
+int acquisition_callback(int fd, int events, void * cb_data) {
+
+    (void) fd;
+    (void) events;
+    (void) cb_data;
+
+    //libusb_handle_events_completed(ctx, NULL);
+    libusb_handle_events(ctx);
 
     return RUN;
 
