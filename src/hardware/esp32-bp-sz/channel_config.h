@@ -14,4 +14,7 @@
 // Počet analógových kanálov spolu
 #define ANALOG_CHANNELS (VOLTAGE_CHANNELS + CURRENT_CHANNELS)
 
+// Meraná frekvencia v kHz
+#define SAMPLE_RATE 10
+
 #endif

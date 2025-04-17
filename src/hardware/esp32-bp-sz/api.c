@@ -2,41 +2,45 @@
 #include "protocol.h"
 #include "configurations.h"
 
+// Statické premenné, ukazovatele na libusb štruktúry pre jednoduchšie alokovanie
 static struct libusb_context * lib_ctx = NULL;
 static struct libusb_device * usb_device = NULL;
 static struct libusb_device_handle * usb_handle = NULL;
 
 // API
-// Definícia API funkcií pre libsigrok hardware driver
+// Definícia API funkcií pre libsigrok hardware driverS
 
 // PROCESS: Inicializácia
 
-/*
-* @brief
-* @param
-* @param
+/**
+* @brief Inicializácia libusb a sigrok ovládaču
+* @param di je 
+* @param sr_ctx je 
 */
 static int init(struct sr_dev_driver * di, struct sr_context * sr_ctx) {
 
+    // Inicializovanie sigrok kontextu pre tento ovládač
     int res = std_init(di, sr_ctx);
 
     if (res != SR_OK) {
         return res;
     }
 
+    // Inicializovanie libusb kontextu, štruktúra libusb_context
     res = libusb_init(&sr_ctx->libusb_ctx);
 
     if (res != LIBUSB_SUCCESS) {
         return SR_ERR;
     }
 
+    // Uloženie smerníka na 
     lib_ctx = sr_ctx->libusb_ctx;
 
     return SR_OK;
 
 }
 
-/*
+/**
 * @brief
 * @param
 */
@@ -68,7 +72,7 @@ static int cleanup(const struct sr_dev_driver * di) {
 
 }
 
-/*
+/**
 * @brief
 * @param
 * @param
@@ -147,11 +151,11 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
             }
 
             // Prúd
-            for (size_t i = VOLTAGE_CHANNELS; i < ANALOG_CHANNELS; i ++) {
+            for (size_t i = 0; i < CURRENT_CHANNELS; i ++) {
 
                 // Nastavenie mena kanálu
                 char name[32];
-                sprintf(name, "Current ch %lu", i - VOLTAGE_CHANNELS);
+                sprintf(name, "Current ch %lu", i);
 
                 // Vytvorenie kanálu
                 ch = sr_channel_new(sdi, i, SR_CHANNEL_ANALOG, TRUE, name);
@@ -159,16 +163,19 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 
             }
 
+            uint8_t logic_name = 0;
             // Pridávanie logických kanálov
-            for (size_t i = ANALOG_CHANNELS; i < LOGIC_CHANNELS + ANALOG_CHANNELS; i ++) {
+            for (int i = LOGIC_CHANNELS - 1; i >= 0; i --) {
 
                 // Nastavenie mena kanálu
                 char name[32];
-                sprintf(name, "Logic ch %lu", i - ANALOG_CHANNELS);
+                sprintf(name, "Logic ch %u", logic_name);
 
                 // Vytvorenie kanálu
                 ch = sr_channel_new(sdi, i, SR_CHANNEL_LOGIC, TRUE, name);
                 lchg->channels = g_slist_append(lchg->channels, ch);
+
+                logic_name ++;
 
             }
 
@@ -215,7 +222,7 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 
 // PROCESS: Konfigurácia
 
-/*
+/**
 * @brief
 * @param
 * @param
@@ -257,7 +264,7 @@ static int config_get(uint32_t key, GVariant ** data,
             break;
         }
         case SR_CONF_SAMPLERATE: {
-            *data = g_variant_new_uint64(SR_KHZ(10));
+            *data = g_variant_new_uint64(SR_KHZ(SAMPLE_RATE));
             break;
         }
         case SR_CONF_CONTINUOUS: {
@@ -282,7 +289,7 @@ static int config_get(uint32_t key, GVariant ** data,
 
 }
 
-/*
+/**
 * @brief
 * @param
 * @param
@@ -324,7 +331,7 @@ static int config_set(uint32_t key, GVariant * data,
 
 }
 
-/*
+/**
 * @brief
 * @param
 * @param
@@ -360,7 +367,7 @@ static int config_list(uint32_t key, GVariant ** data,
 
         }
         case SR_CONF_SAMPLERATE: {
-            uint64_t samplerates[] = {SR_KHZ(10)};
+            uint64_t samplerates[] = {SR_KHZ(SAMPLE_RATE)};
             *data = std_gvar_samplerates(ARRAY_AND_SIZE(samplerates));
             break;
         }
@@ -379,7 +386,7 @@ static int config_list(uint32_t key, GVariant ** data,
 
 // PROCESS: Otvorenie a zatvorenie zariadenia
 
-/*
+/**
 * @brief
 * @param
 */
@@ -392,70 +399,12 @@ static int dev_open(struct sr_dev_inst * sdi) {
         return SR_ERR;
     }
 
-    int result = 0;
+    int result = SR_OK;
 
     result = libusb_open(usb_device, &usb_handle);
     if (result != LIBUSB_SUCCESS) {
         sdi->status = SR_ST_STOPPING;
         return SR_ERR;
-    }
-
-    // Resetovanie USB kontextu pre zariadenia
-    result = libusb_reset_device(usb_handle);
-    if (result != LIBUSB_SUCCESS) {
-        sr_log(SR_LOG_ERR, "Couldn't reset device - %s!", libusb_error_name(result));
-        return SR_ERR;
-    }
-
-    result = libusb_set_configuration(usb_handle, 1);
-    if (result != LIBUSB_SUCCESS) {
-        sr_log(SR_LOG_ERR, "Couldn't get configuration - %s!", libusb_error_name(result));
-        libusb_close(usb_handle);
-        return SR_ERR;
-    }  
-    
-    result = libusb_kernel_driver_active(usb_handle, DATA_INTERFACE);
-    if (result) {
-
-        result = libusb_detach_kernel_driver(usb_handle, DATA_INTERFACE);
-        if (result != LIBUSB_SUCCESS) {
-            sr_log(SR_LOG_ERR, "Kernel detach failed - DATA_INTERFACE!");
-            libusb_close(usb_handle);
-            return SR_ERR;
-        }
-
-    }
-
-    result = libusb_kernel_driver_active(usb_handle, CONTROL_INTERFACE);
-    if (result) {
-
-        result = libusb_detach_kernel_driver(usb_handle, CONTROL_INTERFACE);
-        if (result != LIBUSB_SUCCESS) {
-            sr_log(SR_LOG_ERR, "Kernel detach failed - CONTROL_INTERFACE!");
-            libusb_close(usb_handle);
-            return SR_ERR;
-        }
-
-    }
-
-    // Získanie USB interfacov zariadenia ESP32
-    result = libusb_claim_interface(usb_handle, DATA_INTERFACE);
-    if (result != LIBUSB_SUCCESS) {
-
-        sr_log(SR_LOG_ERR, "Claim interface failed - DATA_INTERFACE!");
-        destroy_mutex();
-        return SR_ERR;
-
-    }
-
-    result = libusb_claim_interface(usb_handle, CONTROL_INTERFACE);
-    if (result != LIBUSB_SUCCESS) {
-
-        sr_log(SR_LOG_ERR, "Claim interface failed - CONTROL_INTERFACE!");
-        libusb_release_interface(usb_handle, DATA_INTERFACE);
-        destroy_mutex();
-        return SR_ERR;
-
     }
 
     devc->usb_handle = usb_handle;
@@ -466,7 +415,7 @@ static int dev_open(struct sr_dev_inst * sdi) {
 
 }
 
-/*
+/**
 * @brief
 * @param
 */
@@ -479,22 +428,9 @@ static int dev_close(struct sr_dev_inst * sdi) {
         return SR_ERR;
     }
 
-    int result = 0;
-
     sdi->status = SR_ST_STOPPING;
 
     if (usb_handle) {
-        
-        // Uvolnenie rozhraní
-        result = libusb_release_interface(devc->usb_handle, DATA_INTERFACE);
-        if (result != LIBUSB_SUCCESS) {
-            sr_log(SR_LOG_ERR, "Error releasing usb interface!");
-        }
-    
-        result = libusb_release_interface(devc->usb_handle, CONTROL_INTERFACE);
-        if (result != LIBUSB_SUCCESS) {
-            sr_log(SR_LOG_ERR, "Error releasing usb interface!");
-        }
 
         libusb_close(usb_handle);
         usb_handle = NULL;
@@ -507,158 +443,75 @@ static int dev_close(struct sr_dev_inst * sdi) {
 
 // PROCESS: Akvizícia a čítanie
 
-/*
-* @brief
+/**
+* @brief začatie prenosu 
 * @param
 */
 static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
 
-    // Inicializácia potrebných premennách
+    // Inicializácia potrebných premenných
     struct dev_context * devc = (struct dev_context *) sdi->priv;
-    int result = 0;
-
-    // Inicializácia mutexu a premenných pre protocol
-    init_mutex();
-    init_it(sdi, lib_ctx);
 
     // Zapnutie procesu
     atomic_store(&devc->running, true);
 
+    // Inicializácia mutexu
+    if (!init_mutex()) {
+        return SR_ERR;
+    }
+
+    // Inicializácia premenných pre protocol
+    if (!init_it(sdi, lib_ctx)) {
+        return SR_ERR;
+    }
+
+    // Inicializácia zariadenia pred čítaním
+    if (!reset_and_claim(devc->usb_handle)) {
+        return SR_ERR;
+    }
+
     // Alokovanie pamäte pre merané Analógové veličiny
-    devc->voltage_data = (float *) g_malloc0(VOLTAGE_CHANNELS * sizeof(float));
-    if (!devc->voltage_data) {
-
-        sr_log(SR_LOG_ERR, "Couldn't allocate buffer for Voltage channels!");
+    if (!allocate_analog_data(devc)) {
         return SR_ERR;
-
     }
 
-    devc->current_data = (float *) g_malloc0(CURRENT_CHANNELS * sizeof(float));
-    if (!devc->current_data) {
-
-        sr_log(SR_LOG_ERR, "Couldn't allocate buffer for Current channels!");
+    // Zapnutie USB prenosu
+    if (!start_usb_transfer(devc->usb_handle)) {
         return SR_ERR;
-
     }
 
-    // Inicializovanie asynchrónneho spracovania prijatých USB packetov
-    for (int i = 0; i < 4; i++) {
-        submit_async_transfer(usb_handle);
-    }
-
-    // Odoslanie start bitu na zariadenie -> začne odosielať USB packety
-    uint8_t signal [64] = {0};
-    signal[0] = START_DATA_TRANSFER;
-    int actual_length = 0;
-
-    result = libusb_bulk_transfer (
-        devc->usb_handle,
-        CONTROL_ENDPOINT_OUT,
-        signal,
-        64,
-        &actual_length,
-        1000
-    );
-
-    if (result != LIBUSB_SUCCESS) {
-
-        sr_log(SR_LOG_ERR, "Couldn't send start signal - %s!", libusb_error_name(result));
+    // Vytvorenie PulseView aktívnej relácie
+    if (!create_session(sdi)) {
         return SR_ERR;
-
-    }
-
-    // Vytvorenie session pre PV
-    result = sr_session_source_add (
-        sdi->session,
-        -1,
-        0,
-        0,
-        acquisition_callback,
-        NULL
-    );
-        
-    if (result != SR_OK) {
-
-        sr_log(SR_LOG_ERR, "Couln't CREATE session!");
-        return SR_ERR;
-
-    }
-
-    // Odoslanie signalizačného packetu do PV
-    result = std_session_send_df_header(sdi);
-    if (result != SR_OK) {
-
-        sr_log(SR_LOG_ERR, "Couln't send session header!");
-        return SR_ERR;
-
-    }
-
-    // Odoslanie signálu na začatie sreamu pre vytvorený session v PV
-    result = std_session_send_df_frame_begin(sdi);
-    if (result != SR_OK) {
-
-        sr_log(SR_LOG_ERR, "Couln't start session!");
-        return SR_ERR;
-
     }
 
     return SR_OK;
 
 }
 
-/*
+/**
 * @brief
 * @param
 */
 static int dev_acquisition_stop(struct sr_dev_inst * sdi) {
 
+    // Inicializácia potrebných premenných
     struct dev_context * devc = (struct dev_context *) sdi->priv;
 
     // Vypnutie procesu
     atomic_store(&devc->running, false);
 
-    int result = 0;
+    // Vypnutie PulseView relácie
+    destroy_session(sdi);
 
-    // Odoslanie signálu na skončenie streamu
-	result = std_session_send_df_frame_end(sdi);
-    if (result != SR_OK) {
-        sr_log(SR_LOG_ERR, "Couln't stop session!");
-        return result;
-    }
-
-    // Odoslanie signalizačného packetu do PV
-    result = std_session_send_df_end(sdi);
-    if (result != SR_OK) {
-        sr_log(SR_LOG_ERR, "Couln't send session end frame!");
-        return result;
-    }
-
-    // Odstránenie a vypnutie Callback na spracovanie sigrok session
-    if (sdi->session) {
-
-        result = sr_session_source_remove(sdi->session, -1);
-        if (result != SR_OK) {
-            sr_log(SR_LOG_ERR, "Couln't remove session!");
-        }
-
-    }
-
-    // Spracovanie zostatkových packetov - všetkých, aj nedokončených
-    libusb_handle_events(lib_ctx);
+    // Uvolnenie rozhraní
+    release_claimed(devc->usb_handle);
 
     // Uvolenie mutexu
     destroy_mutex();
 
     // Uvolnenie alokovanej pamäte
-    if (devc->voltage_data) {
-        g_free(devc->voltage_data);
-        devc->voltage_data = NULL;
-    }
-
-    if (devc->current_data) {
-        g_free(devc->current_data);
-        devc->current_data = NULL;
-    }
+    free_analog_data(devc);
 
     return SR_OK;
 
