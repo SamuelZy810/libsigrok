@@ -14,8 +14,8 @@ static struct libusb_device_handle * usb_handle = NULL;
 
 /**
 * @brief Inicializácia libusb a sigrok ovládaču
-* @param di je 
-* @param sr_ctx je 
+* @param di je povinný parameter, štruktúra predstavujúca ovládač "driver" zariadenia
+* @param sr_ctx je povinný parameter, predtavuje kontext pre sigrok
 */
 static int init(struct sr_dev_driver * di, struct sr_context * sr_ctx) {
 
@@ -41,8 +41,8 @@ static int init(struct sr_dev_driver * di, struct sr_context * sr_ctx) {
 }
 
 /**
-* @brief
-* @param
+* @brief Opak inicializácie, uzavrie sa libusb kontext a sigrok kontext
+* @param di je povinný parameter, ktorý predstavuje ovládač aktuálneho zariadenia
 */
 static int cleanup(const struct sr_dev_driver * di) {
 
@@ -73,9 +73,9 @@ static int cleanup(const struct sr_dev_driver * di) {
 }
 
 /**
-* @brief
-* @param
-* @param
+* @brief Vyhľadávanie zariadenia, zabezpečuje, že libsigrok nájde zariadenie, taktiež ak je zariadenie nájdené, následne sa inicializujú kanáli pre PlseView
+* @param di je povinný parameter, štruktúra predstavujúca ovládač "driver" zariadenia
+* @param sr_ctx je povinný parameter, predtavuje kontext pre sigrok
 */
 static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 
@@ -223,11 +223,7 @@ static GSList * scan(struct sr_dev_driver * di, GSList * options) {
 // PROCESS: Konfigurácia
 
 /**
-* @brief
-* @param
-* @param
-* @param
-* @param
+* @brief Funkcia na získanie konfigurácie zariadenia, kanálov alebo PulseView aplikácie
 */
 static int config_get(uint32_t key, GVariant ** data,
 	const struct sr_dev_inst * sdi, const struct sr_channel_group * cg) {
@@ -290,11 +286,7 @@ static int config_get(uint32_t key, GVariant ** data,
 }
 
 /**
-* @brief
-* @param
-* @param
-* @param
-* @param
+* @brief Funkcia na nastavenie konfigurácie zariadenia, kanálov alebo PulseView aplikácie
 */
 static int config_set(uint32_t key, GVariant * data,
 	const struct sr_dev_inst * sdi, const struct sr_channel_group * cg) {
@@ -332,11 +324,7 @@ static int config_set(uint32_t key, GVariant * data,
 }
 
 /**
-* @brief
-* @param
-* @param
-* @param
-* @param
+* @brief Funkcia na získanie všetkých možných konfigurácii
 */
 static int config_list(uint32_t key, GVariant ** data,
 	const struct sr_dev_inst * sdi, const struct sr_channel_group * cg) {
@@ -387,8 +375,8 @@ static int config_list(uint32_t key, GVariant ** data,
 // PROCESS: Otvorenie a zatvorenie zariadenia
 
 /**
-* @brief
-* @param
+* @brief Otvorenie USB zariadenia nájdeného vo funkcii init()
+* @param sdi je inštancia zariadenia
 */
 static int dev_open(struct sr_dev_inst * sdi) {
 
@@ -416,8 +404,8 @@ static int dev_open(struct sr_dev_inst * sdi) {
 }
 
 /**
-* @brief
-* @param
+* @brief Na zatvorenie a dealokovanie USB zariadenia
+* @param sdi je inštancia zariadenia
 */
 static int dev_close(struct sr_dev_inst * sdi) {
 
@@ -444,8 +432,8 @@ static int dev_close(struct sr_dev_inst * sdi) {
 // PROCESS: Akvizícia a čítanie
 
 /**
-* @brief začatie prenosu 
-* @param
+* @brief začatie prenosu, inicializovanie potrebných premenných, nastavenie zariadenia a vytvorenie relácie v PV
+* @param sdi je inštancia zariadenia
 */
 static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
 
@@ -490,8 +478,8 @@ static int dev_acquisition_start(const struct sr_dev_inst * sdi) {
 }
 
 /**
-* @brief
-* @param
+* @brief ukončenie prenosu, uvolnenie zariadenia a skončenie PV relácie
+* @param sdi je inštancia zariadenia
 */
 static int dev_acquisition_stop(struct sr_dev_inst * sdi) {
 
